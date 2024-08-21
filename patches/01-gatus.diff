@@ -1,6 +1,6 @@
 diff -u -r -N a/gatus/config/endpoint/endpoint.go b/gatus/config/endpoint/endpoint.go
 --- a/gatus/config/endpoint/endpoint.go	2024-08-20 21:23:40.541721312 -0700
-+++ b/gatus/config/endpoint/endpoint.go	2024-08-20 21:26:07.789786014 -0700
++++ b/gatus/config/endpoint/endpoint.go	2024-08-21 09:25:40.076033636 -0700
 @@ -80,6 +80,12 @@
  	// Group the endpoint is a part of. Used for grouping multiple endpoints together on the front end.
  	Group string `yaml:"group,omitempty"`
@@ -27,18 +27,9 @@ diff -u -r -N a/gatus/config/endpoint/endpoint.go b/gatus/config/endpoint/endpoi
  	if len(e.URL) == 0 {
  		return ErrEndpointWithNoURL
  	}
-@@ -237,7 +249,7 @@
- 
- // Key returns the unique key for the Endpoint
- func (e *Endpoint) Key() string {
--	return ConvertGroupAndEndpointNameToKey(e.Group, e.Name)
-+	return ConvertGroupAndEndpointNameToKey(e.Group, e.Name, e.GroupOrder, e.WithinGroupOrder)
- }
- 
- // Close HTTP connections between watchdog and endpoints to avoid dangling socket file descriptors
 diff -u -r -N a/gatus/config/endpoint/external_endpoint.go b/gatus/config/endpoint/external_endpoint.go
 --- a/gatus/config/endpoint/external_endpoint.go	2024-08-20 21:23:40.541721312 -0700
-+++ b/gatus/config/endpoint/external_endpoint.go	2024-08-20 21:26:07.789786014 -0700
++++ b/gatus/config/endpoint/external_endpoint.go	2024-08-21 09:26:05.328714775 -0700
 @@ -24,6 +24,12 @@
  	// Group the endpoint is a part of. Used for grouping multiple endpoints together on the front end.
  	Group string `yaml:"group,omitempty"`
@@ -65,69 +56,6 @@ diff -u -r -N a/gatus/config/endpoint/external_endpoint.go b/gatus/config/endpoi
  	if len(externalEndpoint.Token) == 0 {
  		return ErrExternalEndpointWithNoToken
  	}
-@@ -66,7 +78,7 @@
- 
- // Key returns the unique key for the Endpoint
- func (externalEndpoint *ExternalEndpoint) Key() string {
--	return ConvertGroupAndEndpointNameToKey(externalEndpoint.Group, externalEndpoint.Name)
-+	return ConvertGroupAndEndpointNameToKey(externalEndpoint.Group, externalEndpoint.Name, externalEndpoint.GroupOrder, externalEndpoint.WithinGroupOrder)
- }
- 
- // ToEndpoint converts the ExternalEndpoint to an Endpoint
-diff -u -r -N a/gatus/config/endpoint/key.go b/gatus/config/endpoint/key.go
---- a/gatus/config/endpoint/key.go	2024-08-20 21:23:40.541721312 -0700
-+++ b/gatus/config/endpoint/key.go	2024-08-20 21:26:07.789786014 -0700
-@@ -3,8 +3,8 @@
- import "strings"
- 
- // ConvertGroupAndEndpointNameToKey converts a group and an endpoint to a key
--func ConvertGroupAndEndpointNameToKey(groupName, endpointName string) string {
--	return sanitize(groupName) + "_" + sanitize(endpointName)
-+func ConvertGroupAndEndpointNameToKey(groupName, endpointName, groupOrder, withinGroupOrder string) string {
-+	return sanitize(groupOrder) + "_" + sanitize(groupName) + "_" + sanitize(withinGroupOrder) + "_" + sanitize(endpointName)
- }
- 
- func sanitize(s string) string {
-diff -u -r -N a/gatus/config/endpoint/status.go b/gatus/config/endpoint/status.go
---- a/gatus/config/endpoint/status.go	2024-08-20 21:23:40.541721312 -0700
-+++ b/gatus/config/endpoint/status.go	2024-08-20 21:26:07.789786014 -0700
-@@ -26,11 +26,11 @@
- }
- 
- // NewStatus creates a new Status
--func NewStatus(group, name string) *Status {
-+func NewStatus(group, name, groupOrder, withinGroupOrder string) *Status {
- 	return &Status{
- 		Name:    name,
- 		Group:   group,
--		Key:     ConvertGroupAndEndpointNameToKey(group, name),
-+		Key:     ConvertGroupAndEndpointNameToKey(group, name, groupOrder, withinGroupOrder),
- 		Results: make([]*Result, 0),
- 		Events:  make([]*Event, 0),
- 		Uptime:  NewUptime(),
-diff -u -r -N a/gatus/storage/store/memory/memory.go b/gatus/storage/store/memory/memory.go
---- a/gatus/storage/store/memory/memory.go	2024-08-20 21:23:40.545721421 -0700
-+++ b/gatus/storage/store/memory/memory.go	2024-08-20 21:26:07.789786014 -0700
-@@ -45,8 +45,8 @@
- }
- 
- // GetEndpointStatus returns the endpoint status for a given endpoint name in the given group
--func (s *Store) GetEndpointStatus(groupName, endpointName string, params *paging.EndpointStatusParams) (*endpoint.Status, error) {
--	return s.GetEndpointStatusByKey(endpoint.ConvertGroupAndEndpointNameToKey(groupName, endpointName), params)
-+func (s *Store) GetEndpointStatus(groupName, endpointName, groupOrder, withinGroupOrder string, params *paging.EndpointStatusParams) (*endpoint.Status, error) {
-+	return s.GetEndpointStatusByKey(endpoint.ConvertGroupAndEndpointNameToKey(groupName, endpointName, groupOrder, withinGroupOrder), params)
- }
- 
- // GetEndpointStatusByKey returns the endpoint status for a given key
-@@ -145,7 +145,7 @@
- 	s.Lock()
- 	status, exists := s.cache.Get(key)
- 	if !exists {
--		status = endpoint.NewStatus(ep.Group, ep.Name)
-+		status = endpoint.NewStatus(ep.Group, ep.Name, ep.GroupOrder, ep.WithinGroupOrder)
- 		status.(*endpoint.Status).Events = append(status.(*endpoint.Status).Events, &endpoint.Event{
- 			Type:      endpoint.EventStart,
- 			Timestamp: time.Now(),
 diff -u -r -N a/gatus/storage/store/sql/specific_sqlite.go b/gatus/storage/store/sql/specific_sqlite.go
 --- a/gatus/storage/store/sql/specific_sqlite.go	2024-08-20 21:23:40.545721421 -0700
 +++ b/gatus/storage/store/sql/specific_sqlite.go	2024-08-20 21:26:07.789786014 -0700
@@ -150,45 +78,7 @@ diff -u -r -N a/gatus/storage/store/sql/specific_sqlite.go b/gatus/storage/store
  	`)
 diff -u -r -N a/gatus/storage/store/sql/sql.go b/gatus/storage/store/sql/sql.go
 --- a/gatus/storage/store/sql/sql.go	2024-08-20 21:23:40.545721421 -0700
-+++ b/gatus/storage/store/sql/sql.go	2024-08-20 21:26:07.789786014 -0700
-@@ -127,8 +127,8 @@
- }
- 
- // GetEndpointStatus returns the endpoint status for a given endpoint name in the given group
--func (s *Store) GetEndpointStatus(groupName, endpointName string, params *paging.EndpointStatusParams) (*endpoint.Status, error) {
--	return s.GetEndpointStatusByKey(endpoint.ConvertGroupAndEndpointNameToKey(groupName, endpointName), params)
-+func (s *Store) GetEndpointStatus(groupName, endpointName, groupOrder, withinGroupOrder string, params *paging.EndpointStatusParams) (*endpoint.Status, error) {
-+	return s.GetEndpointStatusByKey(endpoint.ConvertGroupAndEndpointNameToKey(groupName, endpointName, groupOrder, withinGroupOrder), params)
- }
- 
- // GetEndpointStatusByKey returns the endpoint status for a given key
-@@ -157,7 +157,7 @@
- 	if err != nil {
- 		return 0, err
- 	}
--	endpointID, _, _, err := s.getEndpointIDGroupAndNameByKey(tx, key)
-+	endpointID, _, _, _, _, err := s.getEndpointIDGroupAndNameByKey(tx, key)
- 	if err != nil {
- 		_ = tx.Rollback()
- 		return 0, err
-@@ -182,7 +182,7 @@
- 	if err != nil {
- 		return 0, err
- 	}
--	endpointID, _, _, err := s.getEndpointIDGroupAndNameByKey(tx, key)
-+	endpointID, _, _, _, _, err := s.getEndpointIDGroupAndNameByKey(tx, key)
- 	if err != nil {
- 		_ = tx.Rollback()
- 		return 0, err
-@@ -207,7 +207,7 @@
- 	if err != nil {
- 		return nil, err
- 	}
--	endpointID, _, _, err := s.getEndpointIDGroupAndNameByKey(tx, key)
-+	endpointID, _, _, _, _, err := s.getEndpointIDGroupAndNameByKey(tx, key)
- 	if err != nil {
- 		_ = tx.Rollback()
- 		return nil, err
++++ b/gatus/storage/store/sql/sql.go	2024-08-21 09:35:45.036303506 -0700
 @@ -516,10 +516,12 @@
  	//log.Printf("[sql.insertEndpoint] Inserting endpoint with group=%s and name=%s", ep.Group, ep.Name)
  	var id int64
@@ -203,56 +93,12 @@ diff -u -r -N a/gatus/storage/store/sql/sql.go b/gatus/storage/store/sql/sql.go
  	).Scan(&id)
  	if err != nil {
  		return 0, err
-@@ -631,11 +633,11 @@
- 			}
- 		}
- 	}
--	endpointID, group, endpointName, err := s.getEndpointIDGroupAndNameByKey(tx, key)
-+	endpointID, group, endpointName, groupOrder, withinGroupOrder, err := s.getEndpointIDGroupAndNameByKey(tx, key)
+@@ -609,7 +611,7 @@
+ }
+ 
+ func (s *Store) getAllEndpointKeys(tx *sql.Tx) (keys []string, err error) {
+-	rows, err := tx.Query("SELECT endpoint_key FROM endpoints ORDER BY endpoint_key")
++	rows, err := tx.Query("SELECT endpoint_key FROM endpoints ORDER BY endpoint_group_order, endpoint_group, endpoint_within_group_order, endpoint_name")
  	if err != nil {
  		return nil, err
  	}
--	endpointStatus := endpoint.NewStatus(group, endpointName)
-+	endpointStatus := endpoint.NewStatus(group, endpointName, groupOrder, withinGroupOrder)
- 	if parameters.EventsPageSize > 0 {
- 		if endpointStatus.Events, err = s.getEndpointEventsByEndpointID(tx, endpointID, parameters.EventsPage, parameters.EventsPageSize); err != nil {
- 			log.Printf("[sql.getEndpointStatusByKey] Failed to retrieve events for key=%s: %s", key, err.Error())
-@@ -652,21 +654,21 @@
- 	return endpointStatus, nil
- }
- 
--func (s *Store) getEndpointIDGroupAndNameByKey(tx *sql.Tx, key string) (id int64, group, name string, err error) {
-+func (s *Store) getEndpointIDGroupAndNameByKey(tx *sql.Tx, key string) (id int64, group, name, groupOrder, withinGroupOrder string, err error) {
- 	err = tx.QueryRow(
- 		`
--			SELECT endpoint_id, endpoint_group, endpoint_name
-+			SELECT endpoint_id, endpoint_group, endpoint_name, endpoint_group_order, endpoint_within_group_order
- 			FROM endpoints
- 			WHERE endpoint_key = $1
- 			LIMIT 1
- 		`,
- 		key,
--	).Scan(&id, &group, &name)
-+	).Scan(&id, &group, &name, &groupOrder, &withinGroupOrder)
- 	if err != nil {
- 		if errors.Is(err, sql.ErrNoRows) {
--			return 0, "", "", common.ErrEndpointNotFound
-+			return 0, "", "", "", "", common.ErrEndpointNotFound
- 		}
--		return 0, "", "", err
-+		return 0, "", "", "", "", err
- 	}
- 	return
- }
-diff -u -r -N a/gatus/storage/store/store.go b/gatus/storage/store/store.go
---- a/gatus/storage/store/store.go	2024-08-20 21:23:40.545721421 -0700
-+++ b/gatus/storage/store/store.go	2024-08-20 21:26:07.789786014 -0700
-@@ -20,7 +20,7 @@
- 	GetAllEndpointStatuses(params *paging.EndpointStatusParams) ([]*endpoint.Status, error)
- 
- 	// GetEndpointStatus returns the endpoint status for a given endpoint name in the given group
--	GetEndpointStatus(groupName, endpointName string, params *paging.EndpointStatusParams) (*endpoint.Status, error)
-+	GetEndpointStatus(groupName, endpointName, groupOrder, withinGroupOrder string, params *paging.EndpointStatusParams) (*endpoint.Status, error)
- 
- 	// GetEndpointStatusByKey returns the endpoint status for a given key
- 	GetEndpointStatusByKey(key string, params *paging.EndpointStatusParams) (*endpoint.Status, error)
