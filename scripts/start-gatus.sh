@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -E -e -o pipefail
 
-gatus_config="/data/gatus/config/config.yaml"
+gatus_config_dir="/data/gatus/config"
 
 set_umask() {
     # Configure umask to allow write permissions for the group by default
@@ -9,29 +9,29 @@ set_umask() {
     umask 0002
 }
 
-setup_gatus_config() {
-    echo "Checking for existing Gatus config ..."
-    echo
-
-    if [ -f "${gatus_config:?}" ]; then
-        echo "Existing Gatus configuration \"${gatus_config:?}\" found"
-    else
-        echo "Failed to find the gatus config: \"${gatus_config}\""
+validate_prereqs() {
+    if [ $(id -u) -ne 0 ]; then
+        echo "Cannot start this container as non-root!"
+        echo "Ability to switch user to gatus requires launching as root!"
+        echo "Need to run this container as root, however running as ${USER:?} [$(id -a)]"
         exit 1
     fi
-
-    echo
-    echo
 }
 
 start_gatus() {
-    echo "Starting Gatus ..."
+    echo "Starting Gatus as user gatus ..."
     echo
 
-    export GATUS_CONFIG_PATH="$(dirname "${gatus_config:?}")"
-    exec gatus
+    export GATUS_CONFIG_PATH="${gatus_config_dir:?}"
+    exec capsh \
+        --keep=1 \
+        --user=gatus \
+        --inh=cap_net_raw \
+        --addamb=cap_net_raw \
+        -- \
+        -c gatus
 }
 
 set_umask
-setup_gatus_config
+validate_prereqs
 start_gatus

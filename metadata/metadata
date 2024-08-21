@@ -48,6 +48,7 @@ test_start_container() {
     local container_name="${1:?}"
 
     docker run \
+        --user root \
         --name ${container_name:?} \
         --detach \
         --rm \
