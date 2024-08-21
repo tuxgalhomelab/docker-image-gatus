@@ -16,7 +16,7 @@ COPY patches /patches
 
 RUN \
     set -E -e -o pipefail \
-    && homelab install git \
+    && homelab install git patch \
     && mkdir -p /root/gatus-build \
     # Download gatus repo. \
     && git clone --quiet --depth 1 --branch ${GATUS_VERSION:?} https://github.com/TwiN/gatus /root/gatus-build
